@@ -2,6 +2,7 @@
 Python bindings for the `webkit-server <https://github.com/niklasb/webkit-server/>`_
 """
 
+import multiprocessing
 import sys, os
 import subprocess
 import re
@@ -230,9 +231,31 @@ class Client(SelectionMixin):
     self.conn = connection or ServerConnection()
     self._node_factory = node_factory_class(self)
 
-  def visit(self, url):
+  def visit(self, url, timeout=5, trials=3, reset_on_fail=False):
     """ Goes to a given URL. """
-    self.conn.issue_command("Visit", url)
+    if trials != None and trials < 1:
+        raise ValueError("Must have at least one trial")
+    if timeout == None:
+        import itertools
+        trialrange = itertools.count()
+    else:
+        trialrange = range(trials)
+    for i in trialrange:
+        p = multiprocessing.Process(target=self.conn.issue_command,
+                                    name="Visit: {0}".format(url),
+                                    args=("Visit", url))
+        p.start()
+        p.join(timeout)
+        if p.is_alive():
+            p.terminate()
+            p.join()
+            if reset_on_fail:
+                self.reset()
+            continue
+        else:
+            return
+    raise VisitTimeOutError
+    #self.conn.issue_command("Visit", url)
 
   def body(self):
     """ Returns the current DOM as HTML. """
@@ -463,6 +486,10 @@ class EndOfStreamError(Exception):
   """ Raised when the Webkit server closed the connection unexpectedly. """
   def __init__(self, msg="Unexpected end of file"):
     super(Exception, self).__init__(msg)
+
+
+class VisitTimeOutError(Exception):
+  """ Raised when the Webkit server visit times out. """
 
 
 class SocketBuffer(object):
